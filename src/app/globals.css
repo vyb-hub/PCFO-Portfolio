@@ -1,0 +1,265 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-void: 3 12 16;
+    --bg-surface: 4 14 22;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    @apply bg-void text-ink antialiased;
+    font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  }
+
+  /* ── Light mode overrides ─────────────────────────────────── */
+  html:not(.dark) {
+    background-color: #dce8f2;
+    color: rgba(10, 28, 40, 0.92);
+  }
+
+  html:not(.dark) body {
+    background-color: #dce8f2;
+    color: rgba(10, 28, 40, 0.92);
+    background-image:
+      radial-gradient(ellipse 80% 60% at 70% -10%,  rgba(45, 212, 191, 0.12) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 10% 100%,  rgba(13, 148, 136, 0.08) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 45%  50%,  rgba(20, 184, 166, 0.05) 0%, transparent 65%);
+  }
+
+  html:not(.dark) .glass-card {
+    background: linear-gradient(
+      150deg,
+      rgba(255, 255, 255, 0.75) 0%,
+      rgba(255, 255, 255, 0.58) 60%,
+      rgba(255, 255, 255, 0.45) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.85);
+    box-shadow:
+      0  2px  6px  rgba(0, 0, 0, 0.07),
+      0  8px  36px rgba(0, 0, 0, 0.10),
+      0 24px  64px rgba(0, 0, 0, 0.06),
+      inset 0  1px  0   rgba(255, 255, 255, 0.95),
+      inset 0 -1px  0   rgba(0,   0,   0,   0.04);
+  }
+
+  html:not(.dark) .glass-card:hover {
+    background: linear-gradient(
+      150deg,
+      rgba(255, 255, 255, 0.88) 0%,
+      rgba(255, 255, 255, 0.72) 60%,
+      rgba(255, 255, 255, 0.58) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.95);
+  }
+
+  html:not(.dark) .glass-card::before {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.90) 20%,
+      rgba(255, 255, 255, 0.90) 80%,
+      transparent 100%
+    );
+  }
+
+  /* Sidebar light mode */
+  html:not(.dark) aside {
+    background: rgba(255, 255, 255, 0.45) !important;
+    border-color: rgba(255, 255, 255, 0.70) !important;
+  }
+
+  /* Text overrides for light mode */
+  html:not(.dark) .text-ink-muted  { color: rgba(10, 28, 40, 0.55) !important; }
+  html:not(.dark) .text-ink-faint  { color: rgba(10, 28, 40, 0.32) !important; }
+  html:not(.dark) .text-ink        { color: rgba(10, 28, 40, 0.92) !important; }
+
+  /* Nav item light mode */
+  html:not(.dark) .nav-item        { color: rgba(10, 28, 40, 0.60); }
+  html:not(.dark) .nav-item:hover  { background: rgba(0, 0, 0, 0.05); color: rgba(10, 28, 40, 0.92); }
+
+  body {
+    @apply bg-void min-h-screen;
+    background-image:
+      radial-gradient(ellipse 80% 60% at 70% -10%,  rgba(20, 148, 180, 0.14) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 50% at 10% 100%,  rgba(10,  80, 130, 0.10) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 40% at 45%  50%,  rgba(80,  20, 160, 0.05) 0%, transparent 65%);
+    background-attachment: fixed;
+  }
+
+  ::selection {
+    @apply bg-accent/30 text-ink;
+  }
+
+  ::-webkit-scrollbar { width: 5px; height: 5px; }
+  ::-webkit-scrollbar-track  { @apply bg-transparent; }
+  ::-webkit-scrollbar-thumb  { @apply bg-white/10 rounded-full; }
+  ::-webkit-scrollbar-thumb:hover { @apply bg-white/20; }
+}
+
+@layer components {
+
+  /* ── Liquid Glass Card ──────────────────────────────────────
+     Mimics Apple's iOS 26 liquid-glass material:
+     • Very low-opacity tinted fill
+     • High blur + saturation boost for "refraction"
+     • Specular highlight on the top edge
+     • Diffuse multi-layer shadow
+  ──────────────────────────────────────────────────────────── */
+  .glass-card {
+    position: relative;
+    border-radius: 18px;
+    border: 1px solid rgba(255, 255, 255, 0.09);
+    background: linear-gradient(
+      150deg,
+      rgba(255, 255, 255, 0.055) 0%,
+      rgba(255, 255, 255, 0.028) 60%,
+      rgba(255, 255, 255, 0.018) 100%
+    );
+    backdrop-filter: blur(44px) saturate(200%) brightness(1.04);
+    -webkit-backdrop-filter: blur(44px) saturate(200%) brightness(1.04);
+    box-shadow:
+      0  2px  6px  rgba(0, 0, 0, 0.28),
+      0  8px  36px rgba(0, 0, 0, 0.45),
+      0 24px  64px rgba(0, 0, 0, 0.22),
+      inset 0  1px  0   rgba(255, 255, 255, 0.14),
+      inset 0 -1px  0   rgba(0,   0,   0,   0.10);
+    transition: box-shadow 0.30s cubic-bezier(0.16,1,0.3,1),
+                border-color 0.30s cubic-bezier(0.16,1,0.3,1),
+                transform 0.30s cubic-bezier(0.16,1,0.3,1),
+                background 0.30s;
+  }
+
+  /* Top specular line — glass catching light from above */
+  .glass-card::before {
+    content: "";
+    position: absolute;
+    top: 0; left: 14px; right: 14px;
+    height: 1px;
+    border-radius: 0 0 99px 99px;
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.16) 20%,
+      rgba(255, 255, 255, 0.16) 80%,
+      transparent 100%
+    );
+    pointer-events: none;
+    z-index: 1;
+  }
+
+  .glass-card:hover {
+    background: linear-gradient(
+      150deg,
+      rgba(255, 255, 255, 0.085) 0%,
+      rgba(255, 255, 255, 0.045) 60%,
+      rgba(255, 255, 255, 0.030) 100%
+    );
+    border-color: rgba(255, 255, 255, 0.16);
+    box-shadow:
+      0  2px  6px  rgba(0, 0, 0, 0.30),
+      0 18px  56px rgba(0, 0, 0, 0.55),
+      0 32px  80px rgba(0, 0, 0, 0.25),
+      inset 0  1px  0   rgba(255, 255, 255, 0.22),
+      inset 0 -1px  0   rgba(0,   0,   0,   0.12);
+    transform: translateY(-2px);
+  }
+  .glass-card:hover::before {
+    background: linear-gradient(
+      90deg,
+      transparent 0%,
+      rgba(255, 255, 255, 0.26) 20%,
+      rgba(255, 255, 255, 0.26) 80%,
+      transparent 100%
+    );
+  }
+
+  /* ── Metric Card ──────────────────────────────────────────── */
+  .metric-card {
+    @apply glass-card p-5 flex flex-col gap-2;
+  }
+
+  /* ── Sidebar nav item ─────────────────────────────────────── */
+  .nav-item {
+    @apply flex items-center gap-3 px-3 py-2.5 text-sm font-medium
+           text-ink-muted transition-all duration-150 cursor-pointer;
+    border-radius: 16px;
+  }
+
+  .nav-item:hover {
+    background: rgba(255, 255, 255, 0.06);
+    @apply text-ink;
+  }
+
+  .nav-item.active {
+    background: linear-gradient(135deg, rgba(45,212,191,0.12), rgba(45,212,191,0.06));
+    border: 1px solid rgba(45, 212, 191, 0.26);
+    @apply text-accent-light;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,0.10), 0 0 0 0 transparent;
+  }
+  .nav-item.active::before {
+    content: "";
+    position: absolute;
+    left: 0; top: 22%; bottom: 22%;
+    width: 2.5px;
+    border-radius: 0 3px 3px 0;
+    background: linear-gradient(180deg, #2dd4bf, #0d9488);
+    box-shadow: 0 0 8px rgba(45,212,191,0.50);
+  }
+
+  /* ── Insight severity badges ──────────────────────────────── */
+  .badge-info    { @apply bg-blue-500/10 text-blue-400 border border-blue-500/20; }
+  .badge-success { @apply bg-income-muted text-income border border-income-border; }
+  .badge-warning { @apply bg-warning-muted text-warning border border-warning/30; }
+  .badge-alert   { @apply bg-expense-muted text-expense border border-expense-border; }
+
+  /* ── Amount typography ────────────────────────────────────── */
+  .amount-debit   { @apply text-expense font-semibold tabular-nums; }
+  .amount-credit  { @apply text-income  font-semibold tabular-nums; }
+  .amount-neutral { @apply text-ink     font-semibold tabular-nums; }
+
+  /* ── Shimmer skeleton ─────────────────────────────────────── */
+  .skeleton {
+    border-radius: 12px;
+    background: linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.04) 25%,
+      rgba(255, 255, 255, 0.08) 50%,
+      rgba(255, 255, 255, 0.04) 75%
+    );
+    background-size: 200% 100%;
+    animation: shimmer 2s linear infinite;
+  }
+}
+
+@layer utilities {
+  .text-gradient {
+    @apply bg-gradient-to-r from-accent-light via-teal-300 to-cyan-200 bg-clip-text text-transparent;
+  }
+
+  .glow-accent {
+    box-shadow: 0 0 40px rgba(45, 212, 191, 0.28);
+  }
+
+  .hide-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .hide-scrollbar::-webkit-scrollbar { display: none; }
+
+  /* Liquid glass tint variants */
+  .glass-tint-income {
+    background: linear-gradient(160deg, rgba(16,185,129,0.10) 0%, rgba(16,185,129,0.04) 100%);
+  }
+  .glass-tint-expense {
+    background: linear-gradient(160deg, rgba(244,63,94,0.10) 0%, rgba(244,63,94,0.04) 100%);
+  }
+  .glass-tint-accent {
+    background: linear-gradient(160deg, rgba(124,58,237,0.12) 0%, rgba(124,58,237,0.05) 100%);
+  }
+}

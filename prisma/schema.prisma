@@ -1,0 +1,799 @@
+// ============================================================
+// PCFO — Prisma Schema
+// ============================================================
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Users ─────────────────────────────────────────────────────
+model User {
+  id                String    @id @default(cuid())
+  email             String    @unique
+  name              String?
+  image             String?
+  emailVerified     DateTime?
+
+  // MFA
+  totpSecret        String?   // Encrypted
+  totpEnabled       Boolean   @default(false)
+  totpVerifiedAt    DateTime?
+
+  // Gmail OAuth tokens (encrypted at app layer)
+  encryptedTokens   String?   // JSON: {access_token, refresh_token, expiry_date}
+  gmailSyncedAt     DateTime?
+  gmailHistoryId    String?
+
+  // Settings (JSON)
+  settings          Json      @default("{}")
+
+  // Financial profile — all sensitive fields encrypted with HKDF-derived keys
+  encryptedDOB              String?   // AES-256-GCM, HKDF key pcfo-dob-v1 (ISO date string)
+  encryptedPAN              String?   // AES-256-GCM, HKDF key pcfo-pan-v1
+  panAccessedAt             DateTime? // Tripwire: updated every time PAN is decrypted
+  encryptedBankCustomerIds  String?   // AES-256-GCM, HKDF key pcfo-bank-cids-v1 (JSON map)
+  encryptedBankAccountNos   String?   // AES-256-GCM, HKDF key pcfo-bank-accts-v1 (JSON map)
+
+  // Security
+  loginAttempts     Int       @default(0)
+  lockedUntil       DateTime?
+  lastLoginAt       DateTime?
+  lastLoginIp       String?
+
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  // Relations
+  accounts          Account[]
+  nextAuthSessions  Session[]
+  sessions          AppSession[]
+  devices           Device[]
+  emails            FinancialEmail[]
+  transactions      Transaction[]
+  insights          Insight[]
+  budgets           Budget[]
+  subscriptions     Subscription[]
+  auditLogs         AuditLog[]
+  digestJobs        DigestJob[]
+  viceEntries       ViceEntry[]
+  goals             Goal[]
+  debts             Debt[]
+  missionSnapshots  MissionSnapshot[]
+  mandates          Mandate[]
+  statements        StatementUpload[]
+  emailAttachments  EmailAttachment[]
+  financialMonths   FinancialMonth[]
+  statementRequirements UserStatementRequirement[]
+
+  @@map("users")
+}
+
+// ── NextAuth Accounts ─────────────────────────────────────────
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state               String?
+  refresh_token_expires_in    Int?
+
+  user              User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@map("accounts")
+}
+
+// ── NextAuth Sessions ─────────────────────────────────────────
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("sessions")
+}
+
+// NextAuth required
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+  @@map("verification_tokens")
+}
+
+// ── App Sessions (device-aware) ───────────────────────────────
+model AppSession {
+  id            String    @id @default(cuid())
+  userId        String
+  token         String    @unique  // Hashed session token
+  deviceId      String?
+  ipAddress     String?
+  userAgent     String?
+  country       String?
+  city          String?
+  expiresAt     DateTime
+  lastActiveAt  DateTime  @default(now())
+  revokedAt     DateTime?
+  mfaVerified   Boolean   @default(false)
+  createdAt     DateTime  @default(now())
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  device        Device?   @relation(fields: [deviceId], references: [id])
+
+  @@index([userId])
+  @@index([token])
+  @@map("app_sessions")
+}
+
+// ── Devices ───────────────────────────────────────────────────
+model Device {
+  id            String    @id @default(cuid())
+  userId        String
+  fingerprint   String    // Hashed device fingerprint
+  name          String?   // "Chrome on macOS"
+  trusted       Boolean   @default(false)
+  trustedAt     DateTime?
+  lastSeenAt    DateTime  @default(now())
+  lastIp        String?
+  createdAt     DateTime  @default(now())
+
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sessions      AppSession[]
+
+  @@unique([userId, fingerprint])
+  @@map("devices")
+}
+
+// ── Financial Emails ──────────────────────────────────────────
+model FinancialEmail {
+  id              String    @id @default(cuid())
+  userId          String
+  gmailId         String    @unique
+  threadId        String?
+  subject         String
+  sender          String
+  senderName      String?
+  snippet         String?
+  receivedAt      DateTime
+  processedAt     DateTime?
+
+  // Classification
+  isFinancial     Boolean   @default(false)
+  confidence      Float?    // 0.0 – 1.0
+  category        EmailCategory?
+
+  // Extraction status
+  extracted       Boolean   @default(false)
+  extractionError String?
+
+  // Encrypted body for processing
+  encryptedBody   String?
+  bodyHash        String?   // SHA-256 for dedup
+
+  createdAt       DateTime  @default(now())
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions    Transaction[]
+  attachments     EmailAttachment[]
+
+  @@index([userId, receivedAt])
+  @@index([userId, isFinancial])
+  @@map("financial_emails")
+}
+
+// ── Email Attachments ─────────────────────────────────────────
+model EmailAttachment {
+  id                String         @id @default(cuid())
+  userId            String
+  emailId           String
+  gmailAttachmentId String?
+  filename          String?
+  mimeType          String
+  size              Int            @default(0)
+  encryptedData     String?        @db.Text
+  processed         Boolean        @default(false)
+  processingError   String?
+  createdAt         DateTime       @default(now())
+
+  user              User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email             FinancialEmail @relation(fields: [emailId], references: [id], onDelete: Cascade)
+
+  @@index([userId, processed])
+  @@index([emailId])
+  @@map("email_attachments")
+}
+
+enum EmailCategory {
+  BANK_ALERT
+  CREDIT_CARD
+  UPI
+  SALARY
+  EMI
+  INVESTMENT
+  INSURANCE
+  UTILITY
+  SUBSCRIPTION
+  TAX
+  WALLET
+  REFUND
+  OTHER_FINANCE
+}
+
+// ── Transactions ──────────────────────────────────────────────
+model Transaction {
+  id              String          @id @default(cuid())
+  userId          String
+  emailId         String?
+  amount          Float
+  currency        String          @default("INR")
+  type            TransactionType
+  category        String          // Maps to Category.slug
+  subcategory     String?
+  description     String
+  merchant        String?
+  account         String?         // Bank/card account identifier
+  accountLast4    String?
+  referenceId     String?         // UPI ref / txn ID
+  date            DateTime
+  isRecurring     Boolean         @default(false)
+  recurringId     String?
+  confidence      Float?
+  rawText         String?
+  metadata        Json?           // Extra extracted fields
+  verified        Boolean         @default(false)
+  ignored         Boolean         @default(false)
+  statementId     String?
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  email           FinancialEmail? @relation(fields: [emailId], references: [id])
+  statement       StatementUpload? @relation(fields: [statementId], references: [id])
+
+  @@index([userId, date])
+  @@index([userId, category])
+  @@index([userId, type])
+  @@map("transactions")
+}
+
+enum TransactionType {
+  DEBIT
+  CREDIT
+  TRANSFER
+  REFUND
+}
+
+// ── Categories ────────────────────────────────────────────────
+model Category {
+  id          String  @id @default(cuid())
+  slug        String  @unique
+  name        String
+  icon        String
+  color       String
+  type        String  // "income" | "expense" | "both"
+  isSystem    Boolean @default(true)
+  sortOrder   Int     @default(0)
+
+  @@map("categories")
+}
+
+// ── Budgets ───────────────────────────────────────────────────
+model Budget {
+  id          String      @id @default(cuid())
+  userId      String
+  category    String
+  amount      Float
+  currency    String      @default("INR")
+  period      BudgetPeriod
+  startDate   DateTime
+  endDate     DateTime?
+  isActive    Boolean     @default(true)
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, category])
+  @@map("budgets")
+}
+
+enum BudgetPeriod {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+// ── Subscriptions ─────────────────────────────────────────────
+model Subscription {
+  id                String             @id @default(cuid())
+  userId            String
+  name              String
+  merchant          String?
+  amount            Float
+  currency          String             @default("INR")
+  frequency         SubscriptionFreq
+  startDate         DateTime?
+  nextDueDate       DateTime?
+  lastChargedAt     DateTime?
+  isActive          Boolean            @default(true)
+  status            SubscriptionStatus @default(ACTIVE)
+  category          String             @default("subscriptions")
+  subcategory       String?            // "Streaming", "Music", "SaaS", "Fitness"
+  icon              String?            // emoji or service slug
+  autoDetected      Boolean            @default(true)
+  detectedFrom      DetectionSource    @default(EMAIL)
+  autoRenew         Boolean            @default(true)
+  usageConfidence   Float              @default(0.8)  // 0.0–1.0 usage signal strength
+  paymentMethod     String?            // "HDFC Credit Card", "UPI-PhonePe"
+  cardLast4         String?
+  upiHandle         String?
+  upiApp            String?            // "PhonePe", "GPay", "Paytm"
+  isTrial           Boolean            @default(false)
+  trialEndDate      DateTime?
+  priceChangedFrom  Float?             // original amount before price hike
+  notes             String?
+  createdAt         DateTime           @default(now())
+  updatedAt         DateTime           @updatedAt
+
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  mandates          Mandate[]
+
+  @@index([userId, isActive])
+  @@index([userId, status])
+  @@index([userId, nextDueDate])
+  @@map("subscriptions")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  DORMANT    // charges still going but no usage signals
+  EXPIRED
+  TRIAL
+  PAUSED
+  CANCELLED
+}
+
+enum SubscriptionFreq {
+  DAILY
+  WEEKLY
+  MONTHLY
+  QUARTERLY
+  YEARLY
+}
+
+enum DetectionSource {
+  EMAIL
+  TRANSACTION
+  MANUAL
+}
+
+// ── Autopay Mandates ──────────────────────────────────────────
+// Card e-mandates and UPI autopay registrations
+model Mandate {
+  id              String         @id @default(cuid())
+  userId          String
+  subscriptionId  String?        // optional link to subscription
+  type            MandateType
+  merchant        String
+  cardLast4       String?        // for CARD type
+  upiHandle       String?        // for UPI type (handle@bank)
+  upiApp          String?        // "PhonePe", "GPay", "BHIM", "Paytm"
+  frequency       SubscriptionFreq
+  mandateLimit    Float          // authorized debit limit
+  amount          Float?         // actual charge amount if known
+  currency        String         @default("INR")
+  nextDebitDate   DateTime?
+  lastDebitDate   DateTime?
+  status          MandateStatus  @default(ACTIVE)
+  createdDate     DateTime?      // when mandate was created/registered
+  autoDetected    Boolean        @default(true)
+  notes           String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscription    Subscription?  @relation(fields: [subscriptionId], references: [id])
+
+  @@index([userId, type])
+  @@index([userId, status])
+  @@map("mandates")
+}
+
+enum MandateType {
+  CARD
+  UPI
+}
+
+enum MandateStatus {
+  ACTIVE
+  PAUSED
+  CANCELLED
+  EXPIRED
+}
+
+// ── Mission Goals ─────────────────────────────────────────────
+// The ₹5L mission and debt payoff objectives
+model Goal {
+  id              String      @id @default(cuid())
+  userId          String
+  type            GoalType
+  name            String
+  targetAmount    Float
+  currentAmount   Float       @default(0)
+  currency        String      @default("INR")
+  targetDate      DateTime?
+  monthlyTarget   Float?      // required monthly contribution
+  isActive        Boolean     @default(true)
+  isPrimary       Boolean     @default(false)
+  notes           String?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  user            User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isActive])
+  @@map("goals")
+}
+
+enum GoalType {
+  SAVINGS_RESERVE     // The ₹5L target
+  EMERGENCY_FUND
+  DEBT_PAYOFF
+  INVESTMENT
+  CUSTOM
+}
+
+// ── Debt Entries ──────────────────────────────────────────────
+// Individual debt line items (loans, credit cards, BNPL)
+model Debt {
+  id              String    @id @default(cuid())
+  userId          String
+  name            String
+  type            DebtType
+  principalAmount Float     // Original amount
+  currentBalance  Float     // Outstanding balance
+  currency        String    @default("INR")
+  interestRate    Float?    // Annual percentage
+  emiAmount       Float?    // Monthly EMI
+  emiDate         Int?      // Day of month EMI is due
+  lender          String?
+  accountLast4    String?
+  isActive        Boolean   @default(true)
+  startDate       DateTime?
+  projectedEndDate DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  snapshots       DebtSnapshot[]
+
+  @@index([userId, isActive])
+  @@map("debts")
+}
+
+enum DebtType {
+  HOME_LOAN
+  CAR_LOAN
+  PERSONAL_LOAN
+  CREDIT_CARD
+  EDUCATION_LOAN
+  BNPL
+  OTHER
+}
+
+// ── Debt Snapshots ────────────────────────────────────────────
+// Monthly balance snapshots to track paydown velocity
+model DebtSnapshot {
+  id          String    @id @default(cuid())
+  debtId      String
+  balance     Float
+  period      String    // "2024-11"
+  recordedAt  DateTime  @default(now())
+
+  debt        Debt      @relation(fields: [debtId], references: [id], onDelete: Cascade)
+
+  @@unique([debtId, period])
+  @@map("debt_snapshots")
+}
+
+// ── Mission Snapshots ─────────────────────────────────────────
+// Monthly progress snapshots for mission tracking
+model MissionSnapshot {
+  id              String    @id @default(cuid())
+  userId          String
+  period          String    // "2024-11"
+  totalSavings    Float
+  totalDebt       Float
+  netWorth        Float
+  monthlyIncome   Float
+  monthlyExpenses Float
+  savingsRate     Float
+  debtPayoffRate  Float     // % of debt paid this period
+  healthScore     Int       // 0–100
+  createdAt       DateTime  @default(now())
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, period])
+  @@map("mission_snapshots")
+}
+
+// ── AI Insights ───────────────────────────────────────────────
+model Insight {
+  id          String        @id @default(cuid())
+  userId      String
+  type        InsightType
+  title       String
+  body        String
+  severity    InsightSeverity @default(INFO)
+  period      String?       // "2024-11", "2024-W47", etc.
+  metadata    Json?
+  dismissed   Boolean       @default(false)
+  createdAt   DateTime      @default(now())
+
+  user        User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([userId, dismissed])
+  @@map("insights")
+}
+
+enum InsightType {
+  SPENDING_SPIKE
+  BUDGET_WARNING
+  BUDGET_EXCEEDED
+  SUBSCRIPTION_INACTIVE
+  SUBSCRIPTION_CREEP
+  SALARY_RECEIVED
+  UNUSUAL_TRANSACTION
+  SAVINGS_MILESTONE
+  EMI_REMINDER
+  BEHAVIORAL_PATTERN
+  DAILY_DIGEST
+  WEEKLY_SUMMARY
+  MONTHLY_REPORT
+}
+
+enum InsightSeverity {
+  INFO
+  SUCCESS
+  WARNING
+  ALERT
+}
+
+// ── Digest Jobs ───────────────────────────────────────────────
+model DigestJob {
+  id          String      @id @default(cuid())
+  userId      String
+  type        String      // "daily" | "weekly" | "monthly"
+  status      String      @default("pending")
+  scheduledAt DateTime
+  startedAt   DateTime?
+  completedAt DateTime?
+  error       String?
+  result      Json?
+  createdAt   DateTime    @default(now())
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, scheduledAt])
+  @@map("digest_jobs")
+}
+
+// ── Vice & Habit Entries ──────────────────────────────────────
+// Granular behavioral tracking. Each confirmed vice purchase
+// gets its own entry with full behavioral metadata.
+model ViceEntry {
+  id              String    @id @default(cuid())
+  userId          String
+  type            ViceEntryType
+  amount          Float
+  currency        String    @default("INR")
+  merchant        String?
+  brand           String?   // e.g. "Goldflake Lights"
+  quantity        Int?      // packs, litres, etc.
+  transactionId   String?
+  emailId         String?
+  date            DateTime
+  dayOfWeek       Int       // 0=Sun … 6=Sat
+  hourOfDay       Int       // 0-23
+  isWeekend       Boolean   @default(false)
+  isLateNight     Boolean   @default(false)  // 22:00 – 04:00
+  isPostSalary    Boolean   @default(false)  // within 3 days of salary
+  isPreSalary     Boolean   @default(false)  // within 5 days before salary
+  confidence      Float     @default(1.0)
+  detectedKeyword String?
+  createdAt       DateTime  @default(now())
+
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, type, date])
+  @@index([userId, date])
+  @@map("vice_entries")
+}
+
+enum ViceEntryType {
+  ALCOHOL
+  CIGARETTES
+  FUEL
+}
+
+// ── Audit Logs ────────────────────────────────────────────────
+model AuditLog {
+  id          String    @id @default(cuid())
+  userId      String?
+  action      String
+  resource    String?
+  resourceId  String?
+  ipAddress   String?
+  userAgent   String?
+  success     Boolean   @default(true)
+  error       String?
+  metadata    Json?
+  createdAt   DateTime  @default(now())
+
+  user        User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId, createdAt])
+  @@index([action, createdAt])
+  @@map("audit_logs")
+}
+
+// ── Statement Uploads ─────────────────────────────────────────
+model StatementUpload {
+  id               String               @id @default(cuid())
+  userId           String
+  fileName         String
+  fileType         StatementFileType
+  fileSize         Int
+  institutionName  String?
+  accountType      StatementAccountType?
+  accountNumber    String?
+  periodFrom       DateTime?
+  periodTo         DateTime?
+  totalDebits      Float?
+  totalCredits     Float?
+  closingBalance   Float?
+  creditLimit      Float?
+  minimumDue       Float?
+  totalDue         Float?
+  currency         String               @default("INR")
+  status           StatementStatus      @default(PENDING)
+  processingError  String?
+  transactionCount Int                  @default(0)
+  encryptedContent String?              @db.Text
+  createdAt        DateTime             @default(now())
+  updatedAt        DateTime             @updatedAt
+
+  user             User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  transactions     Transaction[]
+  checklistItems   FinancialMonthChecklistItem[]
+
+  @@index([userId, createdAt])
+  @@map("statement_uploads")
+}
+
+enum StatementFileType {
+  PDF
+  CSV
+  XLSX
+}
+
+enum StatementAccountType {
+  SAVINGS
+  CURRENT
+  CREDIT_CARD
+  SALARY
+  LOAN
+  INVESTMENT
+}
+
+enum StatementStatus {
+  PENDING
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+// ── Financial Closing (EC-013) ────────────────────────────────
+// Monthly lifecycle: OPEN -> COLLECTING_DATA -> READY_TO_CLOSE -> CLOSED -> ARCHIVED.
+// Pure orchestration/state — never recomputes anything the Financial Intelligence
+// Platform already computed. See docs/architecture/ADR-021.
+model FinancialMonth {
+  id                String               @id @default(cuid())
+  userId            String
+  year              Int
+  month             Int                  // 1-12
+  periodLabel       String               // "2026-07" — matches the existing yyyy-MM convention
+  status            FinancialMonthStatus @default(OPEN)
+  salaryConfirmed   Boolean              @default(false)
+  salaryConfirmedAt DateTime?
+  closingSnapshot   Json?                // ClosingSnapshot (PipelineResult minus `aggregate`), captured at close time
+  closedAt          DateTime?
+  archivedAt        DateTime?
+  createdAt         DateTime             @default(now())
+  updatedAt         DateTime             @updatedAt
+
+  user              User                 @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checklistItems    FinancialMonthChecklistItem[]
+
+  @@unique([userId, year, month])
+  @@index([userId, status])
+  @@map("financial_months")
+}
+
+enum FinancialMonthStatus {
+  OPEN
+  COLLECTING_DATA
+  READY_TO_CLOSE
+  CLOSED
+  ARCHIVED
+}
+
+// User-configured (or Debt-derived) list of statements expected every month.
+model UserStatementRequirement {
+  id            String                @id @default(cuid())
+  userId        String
+  label         String                // "HDFC Savings", "SBI Home Loan"
+  statementType RequiredStatementType
+  linkedDebtId  String?               // set when autoManaged=true, derived from Debt
+  autoManaged   Boolean               @default(false)  // true = synced from Debt, not user-edited directly
+  isActive      Boolean               @default(true)
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
+
+  user          User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  checklistItems FinancialMonthChecklistItem[]
+
+  @@index([userId, isActive])
+  @@map("user_statement_requirements")
+}
+
+enum RequiredStatementType {
+  BANK
+  CREDIT_CARD
+  LOAN
+  INVESTMENT
+  OTHER
+}
+
+// Per-month instantiation of a requirement, tracking completion for that month only.
+model FinancialMonthChecklistItem {
+  id                       String              @id @default(cuid())
+  financialMonthId         String
+  requirementId            String
+  status                   ChecklistItemStatus @default(PENDING)
+  matchedStatementUploadId String?
+  satisfiedAt              DateTime?
+  createdAt                DateTime            @default(now())
+  updatedAt                DateTime            @updatedAt
+
+  financialMonth           FinancialMonth           @relation(fields: [financialMonthId], references: [id], onDelete: Cascade)
+  requirement              UserStatementRequirement @relation(fields: [requirementId], references: [id], onDelete: Cascade)
+  matchedStatementUpload   StatementUpload?         @relation(fields: [matchedStatementUploadId], references: [id])
+
+  @@unique([financialMonthId, requirementId])
+  @@map("financial_month_checklist_items")
+}
+
+enum ChecklistItemStatus {
+  PENDING
+  SATISFIED
+}
